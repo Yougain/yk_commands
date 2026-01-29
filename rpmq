@@ -1,0 +1,78 @@
+#!/usr/bin/env ruby
+
+QF = '--queryformat=%{name}-%{version}-%{release}.%{arch}\n'
+
+require 'Yk/shellquote'
+require 'Yk/path_aux'
+
+listing = ARGV.delete "-l"
+
+if ARGV.size == 0
+	exec "rpm", "-qa", QF
+else
+	fargs = []
+	rargs = []
+	f2args = []
+	ARGV.each_index do |i|
+		if ARGV[i] =~ /^\-/
+			next
+		end
+		if ARGV[i] =~ /\.rpm$/ && File.exists?(ARGV[i])
+			fargs.push ARGV[i]
+		elsif ARGV[i] !~ /\//
+			if ARGV[i] =~ /([^\/]+)\.rpm$/
+				rargs.push $1
+			else
+				rargs.push ARGV[i]
+			end
+		else
+			f2args.push ARGV[i]
+		end
+	end
+	res1 = true
+	if rargs.size > 0
+		if !listing
+			system "rpm", "-q", QF, *rargs
+		else
+			lst = []
+			"rpm -ql #{rargs.condSQuote}".read_each_line_p do |ln|
+				if ln =~ /(package )(.*)( is not installed)/
+					STDERR.write $` + "#{$1}'#{$2}'#{$3}" + $'
+					break
+				end
+				lst.push ln
+			end
+			if lst.size > 0
+				"xargs ls #{STDOUT.tty? ? '--color -lad' : '-ad'}".open "pw" do |fw|
+					fw.write *lst
+				end
+			end
+		end
+		res1 = $?.exitstatus == 0
+	end
+	res2 = true
+	if fargs.size > 0
+		if !listing
+			system "rpm", "-qp", QF, *fargs
+		else
+			fargs.each do |f|
+				"rpm2cpio #{f} | cpio #{STDOUT.tty? ? '-citv' : '-cit'} 2>&1".read_each_line_p do |ln|
+					if ln.chomp =~ /^\d+ blocks$/
+						next
+					end
+					ln.gsub! /(\s|^)\.\//, "\\1\/"
+					print ln
+				end
+			end
+		end
+		res2 = $?.exitstatus == 0
+	end
+	res3 = true
+    if f2args.size > 0
+        system "rpm", "-qf", *f2args
+        res2 = $?.exitstatus == 0
+    end
+	exit 1 if !res1 || !res2
+end
+
+
